@@ -1,74 +1,60 @@
 import streamlit as st
-import google.generativeai as genai
+import requests
+import base64
 from PIL import Image
 import io
 
-# --- הגדרות עמוד ---
-st.set_page_config(page_title="SmartPantry AI", page_icon="🍎", layout="centered")
+# הגדרות עיצוב
+st.set_page_config(page_title="SmartPantry AI", page_icon="🍎")
+st.title("🍎 SmartPantry: המקרר החכם שלי")
 
-# --- עיצוב (CSS) ---
-st.markdown("""
-    <style>
-    .main { background-color: #f9fbfd; }
-    .stButton>button { 
-        width: 100%; 
-        border-radius: 12px; 
-        height: 3em; 
-        background-color: #27ae60; 
-        color: white;
-        font-weight: bold;
-        border: none;
-    }
-    .stTextInput>div>div>input { border-radius: 10px; }
-    </style>
-    """, unsafe_allow_html=True)
-
-# --- כותרת ראשית ---
-st.title("🍎 SmartPantry")
-st.subheader("הופכים את המקרר שלך לחכם")
-
-# --- סרגל צד: הכנסת מפתח API ---
+# סרגל צד להגדרות
+st.sidebar.header("הגדרות")
 api_key = st.sidebar.text_input("הכנס Google API Key:", type="password")
-st.sidebar.markdown("[לחץ כאן להוצאת מפתח חינם](https://aistudio.google.com/app/apikey)")
 
-# --- אזור העלאת תמונה ---
-uploaded_file = st.file_uploader("צלם או העלה תמונה של המקרר/מזווה שלך", type=["jpg", "jpeg", "png"])
+# העלאת תמונה
+uploaded_file = st.file_uploader("צלם או העלה תמונה של המקרר", type=["jpg", "jpeg", "png"])
+
+def process_image(img):
+    buffered = io.BytesIO()
+    img.save(buffered, format="JPEG")
+    return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
 if uploaded_file is not None:
     image = Image.open(uploaded_file)
-    st.image(image, caption='התמונה שצולמה', use_container_width=True)
+    st.image(image, caption="המקרר שלך", use_container_width=True)
     
-    # --- כפתור הפעולה ---
-    if st.button('נתח מקרר והצע מתכונים'):
+    if st.button('נתח מוצרים והצע מתכונים'):
         if not api_key:
-            st.warning("בבקשה הכנס מפתח API בסרגל הצדי כדי שהקסם יקרה")
+            st.error("אנא הכנס מפתח API בסרגל הצד")
         else:
-            with st.spinner('ה-AI סורק את המצרכים שלך... נא להמתין'):
-                try:
-                    # חיבור ל-Gemini
-                    genai.configure(api_key=api_key)
-                    model = genai.GenerativeModel('gemini-1.5-flash')
+            try:
+                with st.spinner('ה-AI בודק מה יש במקרר...'):
+                    # הכנת התמונה
+                    base64_img = process_image(image)
                     
-                    # ההנחיה ל-AI
-                    prompt = """
-                    נתח את התמונה של המקרר/מזווה:
-                    1. זהה את כל מוצרי המזון שניתן לראות.
-                    2. צור טבלה של המוצרים עם הערכה של כמה ימים נשארו עד שהם יתקלקלו.
-                    3. כתוב 2 מתכונים יצירתיים, טעימים ופשוטים שאפשר להכין *רק* או *בעיקר* עם המצרכים שזיהית.
-                    4. הוסף טיפ קטן לחיסכון במזון.
-                    הכל חייב להיות בעברית.
-                    """
+                    # כתובת ה-API הישירה
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
                     
-                    response = model.generate_content([prompt, image])
+                    # הבקשה ל-AI
+                    payload = {
+                        "contents": [{
+                            "parts": [
+                                {"text": "נתח את התמונה בעברית. צור טבלה עם: שם המוצר, כמות, וכמה ימים נותרו לשימוש. בסוף הצע 2 מתכונים קלים לביצוע ממה שיש."},
+                                {"inline_data": {"mime_type": "image/jpeg", "data": base64_img}}
+                            ]
+                        }]
+                    }
                     
-                    # הצגת התשובה
-                    st.success("הניתוח הושלם!")
-                    st.markdown("### 📋 תוצאות הניתוח:")
-                    st.write(response.text)
+                    response = requests.post(url, json=payload)
+                    data = response.json()
                     
-                except Exception as e:
-                    st.error(f"אופס, קרתה שגיאה: {str(e)}")
-
-# --- תחתית העמוד ---
-st.markdown("---")
-st.caption("SmartPantry MVP - נבנה באמצעות Python ו-Gemini AI")
+                    if "candidates" in data:
+                        answer = data['candidates'][0]['content']['parts'][0]['text']
+                        st.success("הנה מה שמצאתי:")
+                        st.markdown(answer)
+                    else:
+                        st.error("שגיאה מהשרת של גוגל. וודא שהמפתח תקין.")
+                        st.write(data) # מציג את השגיאה אם יש כזו
+            except Exception as e:
+                st.error(f"קרתה שגיאה: {e}")
